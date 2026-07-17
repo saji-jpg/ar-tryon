@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#18243a">
   <title>制服AR試着</title>
-  <link rel="stylesheet" href="style-v2.css?v=20260714-3">
+  <link rel="stylesheet" href="style-v3.css?v=20260717-1">
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
 </head>
@@ -16,7 +16,13 @@
         <p class="eyebrow">CHROMEBOOK AR</p>
         <h1>制服AR試着</h1>
       </div>
-      <button id="fullscreenButton" class="icon-button" type="button" aria-label="全画面表示">全画面</button>
+      <div class="header-actions">
+        <label id="cameraPicker" class="camera-picker hidden">
+          <span>使用カメラ</span>
+          <select id="cameraSelect" aria-label="使用するカメラを選択"></select>
+        </label>
+        <button id="fullscreenButton" class="icon-button" type="button" aria-label="全画面表示">全画面</button>
+      </div>
     </header>
 
     <section class="stage" aria-label="AR試着画面">
@@ -47,6 +53,6 @@
       </button>
     </nav>
   </main>
-  <script src="app-v2.js?v=20260714-2"></script>
+  <script src="app-v3.js?v=20260717-1"></script>
 </body>
 </html>
