@@ -9,9 +9,9 @@ const cameraPicker = document.querySelector('#cameraPicker');
 const cameraSelect = document.querySelector('#cameraSelect');
 
 const uniforms = {
-  natsu: { src: 'natsu.png', scale: 6.2, y: 0.20, x: 0.00 },
-  aihuku: { src: 'aihuku.png', scale: 6.0, y: 0.20, x: -0.01 },
-  huyu: { src: 'huyu.png', scale: 6.5, y: 0.19, x: 0.00 },
+  natsu: { src: 'natsu.png', scale: 6.2, y: 0.33, x: 0.00 },
+  aihuku: { src: 'aihuku.png', scale: 6.0, y: 0.33, x: -0.01 },
+  huyu: { src: 'huyu.png', scale: 6.5, y: 0.32, x: 0.00 },
 };
 
 let selected = 'natsu';
