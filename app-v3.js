@@ -11,6 +11,7 @@ const beautyToggle = document.querySelector('#beautyToggle');
 const beautyStrength = document.querySelector('#beautyStrength');
 const beautyValue = document.querySelector('#beautyValue');
 const beautyStatus = document.querySelector('#beautyStatus');
+const peopleModeButtons = [...document.querySelectorAll('.people-mode-button')];
 const effectCanvas = document.createElement('canvas');
 const effectCtx = effectCanvas.getContext('2d');
 
@@ -27,12 +28,18 @@ const uniforms = {
 let selected = 'natsu';
 let pose = null;
 let faceMesh = null;
+let peopleMode = 'single';
+let multiPoseLandmarker = null;
+let multiFaceLandmarker = null;
+let multiModelsPromise = null;
 let latestFaceLandmarks = null;
+let latestMultiFaceLandmarks = [];
 let running = false;
 let mediaStream = null;
 let frameBusy = false;
 let frameNumber = 0;
 const INPUT_IDLE_MS = 40;
+const MULTI_INPUT_IDLE_MS = 90;
 const images = {};
 const imageLoads = [];
 
@@ -173,6 +180,7 @@ function applyBeautyEffect(points, fit) {
 }
 
 function onFaceResults(results) {
+  if (peopleMode !== 'single') return;
   const detected = results.multiFaceLandmarks?.[0];
   if (!detected) {
     latestFaceLandmarks = null;
@@ -192,31 +200,17 @@ function onFaceResults(results) {
   beautyStatus.textContent = '美肌＋自然なデカ目';
 }
 
-function onResults(results) {
-  if (!video.videoWidth) return;
-  const fit = coverTransform(video.videoWidth, video.videoHeight);
+function drawCameraFrame(source, fit) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
   ctx.save();
   ctx.translate(canvas.width, 0);
   ctx.scale(-1, 1);
-  ctx.drawImage(results.image, fit.x, fit.y, fit.width, fit.height);
+  ctx.drawImage(source, fit.x, fit.y, fit.width, fit.height);
   ctx.restore();
+}
 
-  applyBeautyEffect(latestFaceLandmarks, fit);
-
-  const points = results.poseLandmarks;
-  if (!points || !Number.isFinite(points[11]?.x) || !Number.isFinite(points[12]?.x)) {
-    statusLabel.textContent = '全身が映る位置に立ってください';
-    statusLabel.classList.remove('tracking');
-    stage.classList.add('searching');
-    return;
-  }
-
-  stage.classList.remove('searching');
-  const names = { natsu: '夏服', aihuku: '合服', huyu: '冬服' };
-  statusLabel.textContent = `姿勢を認識中・${names[selected]}を表示`;
-  statusLabel.classList.add('tracking');
+function drawUniform(points, fit) {
+  if (!points || !Number.isFinite(points[11]?.x) || !Number.isFinite(points[12]?.x)) return false;
 
   const left = {
     x: canvas.width - (points[11].x * video.videoWidth * fit.scale + fit.x),
@@ -227,12 +221,14 @@ function onResults(results) {
     y: points[12].y * video.videoHeight * fit.scale + fit.y,
   };
   const shoulderWidth = Math.hypot(left.x - right.x, left.y - right.y);
+  if (!Number.isFinite(shoulderWidth) || shoulderWidth < 8) return false;
+
   const angle = Math.atan2(right.y - left.y, right.x - left.x);
   const centerX = (left.x + right.x) / 2;
   const centerY = (left.y + right.y) / 2;
   const item = uniforms[selected];
   const image = images[selected];
-  if (!image.complete || !image.naturalWidth) return;
+  if (!image.complete || !image.naturalWidth) return false;
 
   const drawWidth = shoulderWidth * item.scale;
   const drawHeight = drawWidth * image.naturalHeight / image.naturalWidth;
@@ -242,6 +238,151 @@ function onResults(results) {
   ctx.globalAlpha = 0.97;
   ctx.drawImage(image, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
   ctx.restore();
+  return true;
+}
+
+function shoulderSpan(points) {
+  if (!points || !points[11] || !points[12]) return 0;
+  return Math.hypot(points[11].x - points[12].x, points[11].y - points[12].y);
+}
+
+function drawScene(source, poseSets = [], faceSets = []) {
+  if (!video.videoWidth) return;
+  const fit = coverTransform(video.videoWidth, video.videoHeight);
+  drawCameraFrame(source, fit);
+
+  if (beautyToggle.checked) {
+    faceSets.slice(0, peopleMode === 'multi' ? 3 : 1).forEach(points => applyBeautyEffect(points, fit));
+  }
+
+  const orderedPoses = poseSets
+    .filter(points => Number.isFinite(points?.[11]?.x) && Number.isFinite(points?.[12]?.x))
+    .slice(0, peopleMode === 'multi' ? 3 : 1)
+    .sort((a, b) => shoulderSpan(a) - shoulderSpan(b));
+  const drawnCount = orderedPoses.reduce((count, points) => count + (drawUniform(points, fit) ? 1 : 0), 0);
+
+  if (drawnCount === 0) {
+    statusLabel.textContent = peopleMode === 'multi' ? '最大3人が映る位置に立ってください' : '全身が映る位置に立ってください';
+    statusLabel.classList.remove('tracking');
+    stage.classList.add('searching');
+  } else {
+    const names = { natsu: '夏服', aihuku: '合服', huyu: '冬服' };
+    statusLabel.textContent = peopleMode === 'multi'
+      ? names[selected] + 'を' + drawnCount + '人に表示中'
+      : '姿勢を認識中・' + names[selected] + 'を表示';
+    statusLabel.classList.add('tracking');
+    stage.classList.remove('searching');
+  }
+
+  if (peopleMode === 'multi') {
+    beautyStatus.textContent = beautyToggle.checked
+      ? Math.min(faceSets.length, 3) + '人に美肌＋自然なデカ目'
+      : '補正はオフです';
+  }
+}
+
+function onResults(results) {
+  if (peopleMode !== 'single') return;
+  const poses = results.poseLandmarks ? [results.poseLandmarks] : [];
+  const faces = latestFaceLandmarks ? [latestFaceLandmarks] : [];
+  drawScene(results.image, poses, faces);
+}
+
+async function ensureMultiPersonModels() {
+  if (multiPoseLandmarker && multiFaceLandmarker) return;
+  if (multiModelsPromise) return multiModelsPromise;
+
+  multiModelsPromise = (async () => {
+    const vision = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/vision_bundle.mjs');
+    const fileset = await vision.FilesetResolver.forVisionTasks(
+      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm',
+    );
+
+    const createModels = async delegate => {
+      multiPoseLandmarker = await vision.PoseLandmarker.createFromOptions(fileset, {
+        baseOptions: {
+          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
+          delegate,
+        },
+        runningMode: 'VIDEO',
+        numPoses: 3,
+        minPoseDetectionConfidence: 0.5,
+        minPosePresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+        outputSegmentationMasks: false,
+      });
+      multiFaceLandmarker = await vision.FaceLandmarker.createFromOptions(fileset, {
+        baseOptions: {
+          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+          delegate,
+        },
+        runningMode: 'VIDEO',
+        numFaces: 3,
+        minFaceDetectionConfidence: 0.5,
+        minFacePresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+        outputFaceBlendshapes: false,
+        outputFacialTransformationMatrixes: false,
+      });
+    };
+
+    try {
+      await createModels('GPU');
+    } catch (gpuError) {
+      console.warn('GPU multi-person models unavailable, using CPU', gpuError);
+      multiPoseLandmarker?.close?.();
+      multiFaceLandmarker?.close?.();
+      multiPoseLandmarker = null;
+      multiFaceLandmarker = null;
+      await createModels('CPU');
+    }
+  })().catch(error => {
+    multiModelsPromise = null;
+    multiPoseLandmarker?.close?.();
+    multiFaceLandmarker?.close?.();
+    multiPoseLandmarker = null;
+    multiFaceLandmarker = null;
+    throw error;
+  });
+
+  return multiModelsPromise;
+}
+
+function updatePeopleModeButtons() {
+  peopleModeButtons.forEach(button => {
+    const active = button.dataset.peopleMode === peopleMode;
+    button.classList.toggle('selected', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+}
+
+async function setPeopleMode(nextMode) {
+  if (nextMode === peopleMode) return;
+  peopleMode = nextMode === 'multi' ? 'multi' : 'single';
+  latestFaceLandmarks = null;
+  latestMultiFaceLandmarks = [];
+  frameNumber = 0;
+  updatePeopleModeButtons();
+
+  if (peopleMode === 'multi') {
+    statusLabel.textContent = running ? '最大3人モードを準備中' : '最大3人モード';
+    beautyStatus.textContent = '最大3人の顔を検出します';
+    if (running) {
+      try {
+        await ensureMultiPersonModels();
+        statusLabel.textContent = '最大3人が映る位置に立ってください';
+      } catch (error) {
+        peopleMode = 'single';
+        updatePeopleModeButtons();
+        statusLabel.textContent = '複数人モードを開始できませんでした';
+        beautyStatus.textContent = '1人モードに戻しました';
+        throw error;
+      }
+    }
+  } else {
+    statusLabel.textContent = running ? '1人が映る位置に立ってください' : '1人モード';
+    beautyStatus.textContent = beautyToggle.checked ? '美肌＋自然なデカ目' : '補正はオフです';
+  }
 }
 
 async function startCamera() {
@@ -273,10 +414,15 @@ async function startCamera() {
     faceMesh.onResults(onFaceResults);
 
     await openCamera('');
+    if (peopleMode === 'multi') {
+      statusLabel.textContent = '最大3人モードを準備中';
+      await ensureMultiPersonModels();
+    }
     running = true;
     requestAnimationFrame(processFrame);
     welcome.classList.add('hidden');
     stage.classList.add('searching');
+    updatePeopleModeButtons();
     resizeCanvas();
   } catch (error) {
     console.error(error);
@@ -321,7 +467,8 @@ async function openCamera(deviceId) {
 }
 
 function scheduleNextFrame() {
-  setTimeout(() => requestAnimationFrame(processFrame), INPUT_IDLE_MS);
+  const idleTime = peopleMode === 'multi' ? MULTI_INPUT_IDLE_MS : INPUT_IDLE_MS;
+  setTimeout(() => requestAnimationFrame(processFrame), idleTime);
 }
 
 async function processFrame() {
@@ -330,10 +477,23 @@ async function processFrame() {
     frameBusy = true;
     try {
       frameNumber += 1;
-      if (beautyToggle.checked && frameNumber % 3 === 0) {
-        await faceMesh.send({ image: video });
+      if (peopleMode === 'multi') {
+        await ensureMultiPersonModels();
+        const timestamp = performance.now();
+        const poseResult = multiPoseLandmarker.detectForVideo(video, timestamp);
+        if (beautyToggle.checked && frameNumber % 2 === 0) {
+          const faceResult = multiFaceLandmarker.detectForVideo(video, timestamp);
+          latestMultiFaceLandmarks = faceResult.faceLandmarks || [];
+        } else if (!beautyToggle.checked) {
+          latestMultiFaceLandmarks = [];
+        }
+        drawScene(video, poseResult.landmarks || [], latestMultiFaceLandmarks);
+      } else {
+        if (beautyToggle.checked && frameNumber % 3 === 0) {
+          await faceMesh.send({ image: video });
+        }
+        await pose.send({ image: video });
       }
-      await pose.send({ image: video });
     } catch (error) {
       console.error('MediaPipe processing failed', error);
     } finally {
@@ -381,6 +541,7 @@ beautyToggle.addEventListener('click', event => {
 
 beautyToggle.addEventListener('change', () => {
   latestFaceLandmarks = null;
+  latestMultiFaceLandmarks = [];
   beautyStrength.disabled = !beautyToggle.checked;
   beautyStatus.textContent = beautyToggle.checked ? '顔を検出しています…' : '補正はオフです';
 });
@@ -414,6 +575,9 @@ function bindActivation(element, handler) {
 }
 
 bindActivation(startButton, startCamera);
+peopleModeButtons.forEach(button => {
+  bindActivation(button, () => setPeopleMode(button.dataset.peopleMode));
+});
 window.addEventListener('resize', resizeCanvas);
 new ResizeObserver(resizeCanvas).observe(stage);
 
@@ -438,4 +602,5 @@ bindActivation(fullscreenButton, async () => {
   }
 });
 
+updatePeopleModeButtons();
 resizeCanvas();
