@@ -32,8 +32,7 @@ let running = false;
 let mediaStream = null;
 let frameBusy = false;
 let frameNumber = 0;
-let lastInferenceAt = 0;
-const INFERENCE_INTERVAL_MS = 1000 / 12;
+const INPUT_IDLE_MS = 40;
 const images = {};
 const imageLoads = [];
 
@@ -91,7 +90,7 @@ function drawEyeMagnification(points, indices, fit, strength) {
   const eye = eyeGeometry(points, indices, fit);
   const sourceWidth = eye.width * 1.85;
   const sourceHeight = eye.width * 1.18;
-  const zoom = 1 + strength * 0.32;
+  const zoom = 1 + strength * 0.192;
   const drawWidth = sourceWidth * zoom;
   const drawHeight = sourceHeight * zoom;
   const sourceX = eye.center.x - sourceWidth / 2;
@@ -320,17 +319,18 @@ async function openCamera(deviceId) {
   await updateCameraList(activeId);
 }
 
-async function processFrame(timestamp) {
+function scheduleNextFrame() {
+  setTimeout(() => requestAnimationFrame(processFrame), INPUT_IDLE_MS);
+}
+
+async function processFrame() {
   if (!running) return;
-  const due = timestamp - lastInferenceAt >= INFERENCE_INTERVAL_MS;
-  if (due && !frameBusy && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+  if (!frameBusy && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
     frameBusy = true;
-    lastInferenceAt = timestamp;
     try {
       frameNumber += 1;
       if (beautyToggle.checked && frameNumber % 3 === 0) {
         await faceMesh.send({ image: video });
-        await new Promise(resolve => setTimeout(resolve, 0));
       }
       await pose.send({ image: video });
     } catch (error) {
@@ -339,7 +339,7 @@ async function processFrame(timestamp) {
       frameBusy = false;
     }
   }
-  requestAnimationFrame(processFrame);
+  scheduleNextFrame();
 }
 
 cameraSelect.addEventListener('change', async () => {
@@ -361,6 +361,23 @@ navigator.mediaDevices?.addEventListener?.('devicechange', () => {
   updateCameraList(activeId).catch(console.error);
 });
 
+let suppressBeautyClickUntil = 0;
+
+beautyToggle.addEventListener('pointerup', event => {
+  if (event.pointerType !== 'touch') return;
+  event.preventDefault();
+  suppressBeautyClickUntil = performance.now() + 800;
+  beautyToggle.checked = !beautyToggle.checked;
+  beautyToggle.dispatchEvent(new Event('change'));
+});
+
+beautyToggle.addEventListener('click', event => {
+  if (performance.now() < suppressBeautyClickUntil) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+});
+
 beautyToggle.addEventListener('change', () => {
   latestFaceLandmarks = null;
   beautyStrength.disabled = !beautyToggle.checked;
@@ -371,12 +388,36 @@ beautyStrength.addEventListener('input', () => {
   beautyValue.value = `${beautyStrength.value}%`;
 });
 
-startButton.addEventListener('click', startCamera);
+const lastTouchActivation = new WeakMap();
+
+function bindActivation(element, handler) {
+  const run = event => {
+    Promise.resolve(handler(event)).catch(error => console.error('Control action failed', error));
+  };
+
+  element.addEventListener('pointerup', event => {
+    if (event.pointerType !== 'touch') return;
+    event.preventDefault();
+    lastTouchActivation.set(element, performance.now());
+    run(event);
+  });
+
+  element.addEventListener('click', event => {
+    const lastTouch = lastTouchActivation.get(element) || 0;
+    if (performance.now() - lastTouch < 800) {
+      event.preventDefault();
+      return;
+    }
+    run(event);
+  });
+}
+
+bindActivation(startButton, startCamera);
 window.addEventListener('resize', resizeCanvas);
 new ResizeObserver(resizeCanvas).observe(stage);
 
 document.querySelectorAll('.uniform-button').forEach(button => {
-  button.addEventListener('click', () => {
+  bindActivation(button, () => {
     selected = button.dataset.uniform;
     document.querySelectorAll('.uniform-button').forEach(other => {
       const active = other === button;
@@ -386,7 +427,8 @@ document.querySelectorAll('.uniform-button').forEach(button => {
   });
 });
 
-document.querySelector('#fullscreenButton').addEventListener('click', async () => {
+const fullscreenButton = document.querySelector('#fullscreenButton');
+bindActivation(fullscreenButton, async () => {
   try {
     if (document.fullscreenElement) await document.exitFullscreen();
     else await document.documentElement.requestFullscreen();
