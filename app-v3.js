@@ -157,8 +157,8 @@ function applyBeautyEffect(points, fit) {
     else ctx.lineTo(point.x, point.y);
   });
   ctx.closePath();
-  ctx.ellipse(leftEye.center.x, leftEye.center.y, leftEye.width * 0.72, leftEye.width * 0.48, 0, 0, Math.PI * 2);
-  ctx.ellipse(rightEye.center.x, rightEye.center.y, rightEye.width * 0.72, rightEye.width * 0.48, 0, 0, Math.PI * 2);
+  ctx.ellipse(leftEye.center.x, leftEye.center.y, leftEye.width * 0.56, leftEye.width * 0.24, 0, 0, Math.PI * 2);
+  ctx.ellipse(rightEye.center.x, rightEye.center.y, rightEye.width * 0.56, rightEye.width * 0.24, 0, 0, Math.PI * 2);
   ctx.ellipse(mouthCenter.x, mouthCenter.y, mouthWidth * 0.62, mouthWidth * 0.34, 0, 0, Math.PI * 2);
   ctx.clip('evenodd');
   ctx.globalAlpha = 0.22 + strength * 0.42;
@@ -167,6 +167,11 @@ function applyBeautyEffect(points, fit) {
   ctx.restore();
 
   drawBlush(points, fit, strength);
+
+  // Re-snapshot after smoothing so enlarged eye patches keep the beauty effect.
+  effectCtx.clearRect(0, 0, effectCanvas.width, effectCanvas.height);
+  effectCtx.drawImage(canvas, 0, 0);
+
   drawEyeMagnification(points, LEFT_EYE, fit, strength);
   drawEyeMagnification(points, RIGHT_EYE, fit, strength);
 }
