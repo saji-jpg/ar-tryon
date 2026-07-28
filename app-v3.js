@@ -293,9 +293,9 @@ async function ensureMultiPersonModels() {
   if (multiModelsPromise) return multiModelsPromise;
 
   multiModelsPromise = (async () => {
-    const vision = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/vision_bundle.mjs');
+    const vision = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/vision_bundle.mjs');
     const fileset = await vision.FilesetResolver.forVisionTasks(
-      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm',
+      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm',
     );
 
     const createModels = async delegate => {
@@ -390,6 +390,7 @@ async function startCamera() {
   startButton.disabled = true;
   startButton.textContent = '起動しています…';
   statusLabel.textContent = 'カメラを準備中';
+  let startPhase = 'camera';
   try {
     if (!window.Pose || !window.FaceMesh) throw new Error('認識ライブラリを読み込めませんでした。インターネット接続を確認してください。');
     await Promise.all(imageLoads);
@@ -415,6 +416,7 @@ async function startCamera() {
 
     await openCamera('');
     if (peopleMode === 'multi') {
+      startPhase = 'multi-model';
       statusLabel.textContent = '最大3人モードを準備中';
       await ensureMultiPersonModels();
     }
@@ -426,12 +428,20 @@ async function startCamera() {
     resizeCanvas();
   } catch (error) {
     console.error(error);
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(track => track.stop());
+      mediaStream = null;
+      video.srcObject = null;
+    }
     startButton.disabled = false;
     startButton.textContent = 'もう一度試す';
-    statusLabel.textContent = 'カメラを開始できません';
+    const multiModelFailed = startPhase === 'multi-model';
+    statusLabel.textContent = multiModelFailed ? '最大3人モードを準備できません' : 'カメラを開始できません';
     welcome.querySelector('p').textContent = error.name === 'NotAllowedError'
       ? 'カメラの使用が許可されていません。アドレスバーのカメラ設定から許可してください。'
-      : error.message;
+      : multiModelFailed
+        ? '複数人用データを読み込めませんでした。インターネット接続を確認して再読み込みしてください。'
+        : error.message;
   }
 }
 
