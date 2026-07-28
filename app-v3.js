@@ -382,7 +382,6 @@ async function configureModelsForMode() {
     ensureFaceMesh(3);
     await ensureMultiPersonModels();
   } else {
-    disposeMultiPersonPose();
     ensureFaceMesh(1);
     ensureSinglePersonPose();
   }
