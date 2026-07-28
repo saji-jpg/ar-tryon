@@ -32,6 +32,8 @@ let running = false;
 let mediaStream = null;
 let frameBusy = false;
 let frameNumber = 0;
+let lastInferenceAt = 0;
+const INFERENCE_INTERVAL_MS = 1000 / 12;
 const images = {};
 const imageLoads = [];
 
@@ -89,7 +91,7 @@ function drawEyeMagnification(points, indices, fit, strength) {
   const eye = eyeGeometry(points, indices, fit);
   const sourceWidth = eye.width * 1.85;
   const sourceHeight = eye.width * 1.18;
-  const zoom = 1 + strength * 0.13;
+  const zoom = 1 + strength * 0.32;
   const drawWidth = sourceWidth * zoom;
   const drawHeight = sourceHeight * zoom;
   const sourceX = eye.center.x - sourceWidth / 2;
@@ -105,6 +107,29 @@ function drawEyeMagnification(points, indices, fit, strength) {
     sourceX, sourceY, sourceWidth, sourceHeight,
     eye.center.x - drawWidth / 2, eye.center.y - drawHeight / 2, drawWidth, drawHeight,
   );
+  ctx.restore();
+}
+
+function drawBlush(points, fit, strength) {
+  const leftCheek = facePoint(points[117], fit);
+  const rightCheek = facePoint(points[346], fit);
+  const faceLeft = facePoint(points[234], fit);
+  const faceRight = facePoint(points[454], fit);
+  const faceWidth = Math.max(1, Math.hypot(faceLeft.x - faceRight.x, faceLeft.y - faceRight.y));
+  const radius = faceWidth * 0.105;
+
+  ctx.save();
+  ctx.globalAlpha = strength;
+  for (const cheek of [leftCheek, rightCheek]) {
+    const gradient = ctx.createRadialGradient(cheek.x, cheek.y, 0, cheek.x, cheek.y, radius);
+    gradient.addColorStop(0, 'rgba(255, 112, 150, 0.24)');
+    gradient.addColorStop(0.5, 'rgba(255, 130, 160, 0.12)');
+    gradient.addColorStop(1, 'rgba(255, 150, 175, 0)');
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(cheek.x, cheek.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
@@ -137,11 +162,12 @@ function applyBeautyEffect(points, fit) {
   ctx.ellipse(rightEye.center.x, rightEye.center.y, rightEye.width * 0.72, rightEye.width * 0.48, 0, 0, Math.PI * 2);
   ctx.ellipse(mouthCenter.x, mouthCenter.y, mouthWidth * 0.62, mouthWidth * 0.34, 0, 0, Math.PI * 2);
   ctx.clip('evenodd');
-  ctx.globalAlpha = 0.16 + strength * 0.30;
-  ctx.filter = `blur(${Math.max(1, strength * 6).toFixed(1)}px) brightness(${(1 + strength * 0.07).toFixed(3)}) saturate(${(1 + strength * 0.05).toFixed(3)})`;
+  ctx.globalAlpha = 0.22 + strength * 0.42;
+  ctx.filter = `blur(${Math.max(1.5, strength * 8).toFixed(1)}px) brightness(${(1 + strength * 0.14).toFixed(3)}) saturate(${(1 + strength * 0.08).toFixed(3)})`;
   ctx.drawImage(effectCanvas, 0, 0);
   ctx.restore();
 
+  drawBlush(points, fit, strength);
   drawEyeMagnification(points, LEFT_EYE, fit, strength);
   drawEyeMagnification(points, RIGHT_EYE, fit, strength);
 }
@@ -150,7 +176,7 @@ function onFaceResults(results) {
   const detected = results.multiFaceLandmarks?.[0];
   if (!detected) {
     latestFaceLandmarks = null;
-    beautyStatus.textContent = beautyToggle.checked ? '顔を正面に映してください' : '顔加工はオフです';
+    beautyStatus.textContent = beautyToggle.checked ? '顔を正面に映してください' : '補正はオフです';
     return;
   }
 
@@ -228,7 +254,7 @@ async function startCamera() {
     await Promise.all(imageLoads);
     pose = new Pose({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
     pose.setOptions({
-      modelComplexity: 1,
+      modelComplexity: 0,
       smoothLandmarks: true,
       enableSegmentation: false,
       minDetectionConfidence: 0.55,
@@ -285,8 +311,8 @@ async function openCamera(deviceId) {
   }
   if (mediaStream) mediaStream.getTracks().forEach(track => track.stop());
   const videoSettings = deviceId
-    ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
-    : { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } };
+    ? { deviceId: { exact: deviceId }, width: { ideal: 960 }, height: { ideal: 540 } }
+    : { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 540 } };
   mediaStream = await navigator.mediaDevices.getUserMedia({ video: videoSettings, audio: false });
   video.srcObject = mediaStream;
   await video.play();
@@ -294,18 +320,21 @@ async function openCamera(deviceId) {
   await updateCameraList(activeId);
 }
 
-async function processFrame() {
+async function processFrame(timestamp) {
   if (!running) return;
-  if (!frameBusy && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+  const due = timestamp - lastInferenceAt >= INFERENCE_INTERVAL_MS;
+  if (due && !frameBusy && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
     frameBusy = true;
+    lastInferenceAt = timestamp;
     try {
       frameNumber += 1;
-      if (beautyToggle.checked && frameNumber % 2 === 0) {
+      if (beautyToggle.checked && frameNumber % 3 === 0) {
         await faceMesh.send({ image: video });
+        await new Promise(resolve => setTimeout(resolve, 0));
       }
       await pose.send({ image: video });
     } catch (error) {
-      console.error('Pose processing failed', error);
+      console.error('MediaPipe processing failed', error);
     } finally {
       frameBusy = false;
     }
@@ -335,7 +364,7 @@ navigator.mediaDevices?.addEventListener?.('devicechange', () => {
 beautyToggle.addEventListener('change', () => {
   latestFaceLandmarks = null;
   beautyStrength.disabled = !beautyToggle.checked;
-  beautyStatus.textContent = beautyToggle.checked ? '顔を検出しています…' : '顔加工はオフです';
+  beautyStatus.textContent = beautyToggle.checked ? '顔を検出しています…' : '補正はオフです';
 });
 
 beautyStrength.addEventListener('input', () => {
