@@ -16,6 +16,10 @@ input[type="range"] { touch-action: pan-x; }
 .app { height: 100dvh; min-height: 0; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); padding: 14px 18px 94px; gap: 12px; }
 .topbar { display: flex; align-items: center; justify-content: space-between; max-width: 1500px; width: 100%; margin: auto; }
 .header-actions { display: flex; align-items: center; gap: 10px; }
+.people-mode-switch { display: grid; grid-template-columns: repeat(2, auto); gap: 3px; padding: 3px; border: 1px solid #526078; border-radius: 14px; background: rgba(15, 23, 42, 0.82); }
+.people-mode-button { min-width: 68px; min-height: 42px; border: 0; border-radius: 10px; padding: 8px 12px; color: #cbd5e1; background: transparent; font-size: 13px; font-weight: 800; cursor: pointer; touch-action: manipulation; }
+.people-mode-button.selected { color: #0b1220; background: linear-gradient(135deg, #7dd3fc, #f9a8d4); box-shadow: 0 4px 14px rgba(125, 211, 252, 0.22); }
+.people-mode-button:focus-visible { outline: 2px solid #f8fafc; outline-offset: 2px; }
 .camera-picker { display: flex; align-items: center; gap: 8px; color: #cbd5e1; font-size: 13px; font-weight: 700; }
 .camera-picker.hidden { display: none; }
 .camera-picker select { max-width: 260px; min-height: 42px; border: 1px solid #526078; border-radius: 12px; padding: 8px 34px 8px 12px; color: white; background: #202d43; cursor: pointer; }
@@ -71,6 +75,9 @@ h1 { margin: 0; font-size: clamp(20px, 3vw, 30px); letter-spacing: .04em; }
   .uniform-button { justify-content: center; min-height: 56px; padding: 8px; }
   .uniform-button > span:last-child small { display: none; }
   .swatch { display: none; }
+  .header-actions { gap: 6px; }
+  .people-mode-switch { gap: 2px; padding: 2px; }
+  .people-mode-button { min-width: 54px; min-height: 40px; padding: 7px 8px; font-size: 12px; }
   .icon-button { padding: 8px 11px; }
   .camera-picker > span { display: none; }
   .camera-picker select { max-width: 150px; }
