@@ -140,8 +140,6 @@ function applyBeautyEffect(points, fit) {
   effectCtx.drawImage(canvas, 0, 0);
 
   const oval = FACE_OVAL.map(index => facePoint(points[index], fit));
-  const leftEye = eyeGeometry(points, LEFT_EYE, fit);
-  const rightEye = eyeGeometry(points, RIGHT_EYE, fit);
   const mouthLeft = facePoint(points[61], fit);
   const mouthRight = facePoint(points[291], fit);
   const mouthCenter = {
@@ -157,8 +155,6 @@ function applyBeautyEffect(points, fit) {
     else ctx.lineTo(point.x, point.y);
   });
   ctx.closePath();
-  ctx.ellipse(leftEye.center.x, leftEye.center.y, leftEye.width * 0.56, leftEye.width * 0.24, 0, 0, Math.PI * 2);
-  ctx.ellipse(rightEye.center.x, rightEye.center.y, rightEye.width * 0.56, rightEye.width * 0.24, 0, 0, Math.PI * 2);
   ctx.ellipse(mouthCenter.x, mouthCenter.y, mouthWidth * 0.62, mouthWidth * 0.34, 0, 0, Math.PI * 2);
   ctx.clip('evenodd');
   ctx.globalAlpha = 0.22 + strength * 0.42;
