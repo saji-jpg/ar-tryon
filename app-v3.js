@@ -30,13 +30,13 @@ let pose = null;
 let faceMesh = null;
 let peopleMode = 'single';
 let multiPoseLandmarker = null;
-let multiFaceLandmarker = null;
 let multiModelsPromise = null;
 let latestFaceLandmarks = null;
 let latestMultiFaceLandmarks = [];
 let running = false;
 let mediaStream = null;
 let frameBusy = false;
+let modeSwitching = false;
 let frameNumber = 0;
 const INPUT_IDLE_MS = 40;
 const MULTI_INPUT_IDLE_MS = 90;
@@ -179,24 +179,34 @@ function applyBeautyEffect(points, fit) {
   drawEyeMagnification(points, RIGHT_EYE, fit, strength);
 }
 
+function smoothFace(previous, detected) {
+  if (!previous || previous.length !== detected.length) return detected.map(point => ({ ...point }));
+  return detected.map((point, index) => ({
+    x: previous[index].x * 0.65 + point.x * 0.35,
+    y: previous[index].y * 0.65 + point.y * 0.35,
+    z: previous[index].z * 0.65 + point.z * 0.35,
+  }));
+}
+
 function onFaceResults(results) {
-  if (peopleMode !== 'single') return;
-  const detected = results.multiFaceLandmarks?.[0];
+  const detectedFaces = results.multiFaceLandmarks || [];
+  if (peopleMode === 'multi') {
+    latestMultiFaceLandmarks = detectedFaces.slice(0, 3).map((detected, index) =>
+      smoothFace(latestMultiFaceLandmarks[index], detected));
+    beautyStatus.textContent = beautyToggle.checked
+      ? latestMultiFaceLandmarks.length + '人に美肌＋自然なデカ目'
+      : '補正はオフです';
+    return;
+  }
+
+  const detected = detectedFaces[0];
   if (!detected) {
     latestFaceLandmarks = null;
     beautyStatus.textContent = beautyToggle.checked ? '顔を正面に映してください' : '補正はオフです';
     return;
   }
 
-  if (latestFaceLandmarks?.length === detected.length) {
-    latestFaceLandmarks = detected.map((point, index) => ({
-      x: latestFaceLandmarks[index].x * 0.65 + point.x * 0.35,
-      y: latestFaceLandmarks[index].y * 0.65 + point.y * 0.35,
-      z: latestFaceLandmarks[index].z * 0.65 + point.z * 0.35,
-    }));
-  } else {
-    latestFaceLandmarks = detected.map(point => ({ ...point }));
-  }
+  latestFaceLandmarks = smoothFace(latestFaceLandmarks, detected);
   beautyStatus.textContent = '美肌＋自然なデカ目';
 }
 
@@ -288,8 +298,46 @@ function onResults(results) {
   drawScene(results.image, poses, faces);
 }
 
+function ensureFaceMesh(maxFaces) {
+  if (!faceMesh) {
+    faceMesh = new FaceMesh({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
+    faceMesh.onResults(onFaceResults);
+  }
+  faceMesh.setOptions({
+    maxNumFaces: maxFaces,
+    refineLandmarks: true,
+    selfieMode: false,
+    minDetectionConfidence: 0.55,
+    minTrackingConfidence: 0.55,
+  });
+}
+
+function ensureSinglePersonPose() {
+  if (pose) return;
+  pose = new Pose({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+  pose.setOptions({
+    modelComplexity: 0,
+    smoothLandmarks: true,
+    enableSegmentation: false,
+    minDetectionConfidence: 0.55,
+    minTrackingConfidence: 0.55,
+  });
+  pose.onResults(onResults);
+}
+
+function disposeSinglePersonPose() {
+  pose?.close?.();
+  pose = null;
+}
+
+function disposeMultiPersonPose() {
+  multiPoseLandmarker?.close?.();
+  multiPoseLandmarker = null;
+  multiModelsPromise = null;
+}
+
 async function ensureMultiPersonModels() {
-  if (multiPoseLandmarker && multiFaceLandmarker) return;
+  if (multiPoseLandmarker) return;
   if (multiModelsPromise) return multiModelsPromise;
 
   multiModelsPromise = (async () => {
@@ -298,54 +346,46 @@ async function ensureMultiPersonModels() {
       'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm',
     );
 
-    const createModels = async delegate => {
-      multiPoseLandmarker = await vision.PoseLandmarker.createFromOptions(fileset, {
-        baseOptions: {
-          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
-          delegate,
-        },
-        runningMode: 'VIDEO',
-        numPoses: 3,
-        minPoseDetectionConfidence: 0.5,
-        minPosePresenceConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-        outputSegmentationMasks: false,
-      });
-      multiFaceLandmarker = await vision.FaceLandmarker.createFromOptions(fileset, {
-        baseOptions: {
-          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
-          delegate,
-        },
-        runningMode: 'VIDEO',
-        numFaces: 3,
-        minFaceDetectionConfidence: 0.5,
-        minFacePresenceConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-        outputFaceBlendshapes: false,
-        outputFacialTransformationMatrixes: false,
-      });
-    };
+    const createPoseModel = delegate => vision.PoseLandmarker.createFromOptions(fileset, {
+      baseOptions: {
+        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
+        delegate,
+      },
+      runningMode: 'VIDEO',
+      numPoses: 3,
+      minPoseDetectionConfidence: 0.5,
+      minPosePresenceConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+      outputSegmentationMasks: false,
+    });
 
     try {
-      await createModels('GPU');
+      multiPoseLandmarker = await createPoseModel('GPU');
     } catch (gpuError) {
-      console.warn('GPU multi-person models unavailable, using CPU', gpuError);
+      console.warn('GPU multi-person pose unavailable, using CPU', gpuError);
       multiPoseLandmarker?.close?.();
-      multiFaceLandmarker?.close?.();
-      multiPoseLandmarker = null;
-      multiFaceLandmarker = null;
-      await createModels('CPU');
+      multiPoseLandmarker = await createPoseModel('CPU');
     }
   })().catch(error => {
     multiModelsPromise = null;
     multiPoseLandmarker?.close?.();
-    multiFaceLandmarker?.close?.();
     multiPoseLandmarker = null;
-    multiFaceLandmarker = null;
     throw error;
   });
 
   return multiModelsPromise;
+}
+
+async function configureModelsForMode() {
+  if (peopleMode === 'multi') {
+    disposeSinglePersonPose();
+    ensureFaceMesh(3);
+    await ensureMultiPersonModels();
+  } else {
+    disposeMultiPersonPose();
+    ensureFaceMesh(1);
+    ensureSinglePersonPose();
+  }
 }
 
 function updatePeopleModeButtons() {
@@ -357,31 +397,41 @@ function updatePeopleModeButtons() {
 }
 
 async function setPeopleMode(nextMode) {
-  if (nextMode === peopleMode) return;
-  peopleMode = nextMode === 'multi' ? 'multi' : 'single';
+  const requestedMode = nextMode === 'multi' ? 'multi' : 'single';
+  if (requestedMode === peopleMode) return;
+
+  const previousMode = peopleMode;
+  modeSwitching = true;
+  while (frameBusy) await new Promise(resolve => setTimeout(resolve, 25));
+
+  peopleMode = requestedMode;
   latestFaceLandmarks = null;
   latestMultiFaceLandmarks = [];
   frameNumber = 0;
   updatePeopleModeButtons();
 
-  if (peopleMode === 'multi') {
-    statusLabel.textContent = running ? '最大3人モードを準備中' : '最大3人モード';
-    beautyStatus.textContent = '最大3人の顔を検出します';
-    if (running) {
-      try {
-        await ensureMultiPersonModels();
-        statusLabel.textContent = '最大3人が映る位置に立ってください';
-      } catch (error) {
-        peopleMode = 'single';
-        updatePeopleModeButtons();
-        statusLabel.textContent = '複数人モードを開始できませんでした';
-        beautyStatus.textContent = '1人モードに戻しました';
-        throw error;
-      }
+  try {
+    if (running) await configureModelsForMode();
+    if (peopleMode === 'multi') {
+      statusLabel.textContent = running ? '最大3人が映る位置に立ってください' : '最大3人モード';
+      beautyStatus.textContent = '最大3人の顔を検出します';
+    } else {
+      statusLabel.textContent = running ? '1人が映る位置に立ってください' : '1人モード';
+      beautyStatus.textContent = beautyToggle.checked ? '美肌＋自然なデカ目' : '補正はオフです';
     }
-  } else {
-    statusLabel.textContent = running ? '1人が映る位置に立ってください' : '1人モード';
-    beautyStatus.textContent = beautyToggle.checked ? '美肌＋自然なデカ目' : '補正はオフです';
+  } catch (error) {
+    peopleMode = previousMode;
+    updatePeopleModeButtons();
+    try {
+      if (running) await configureModelsForMode();
+    } catch (restoreError) {
+      console.error('Could not restore previous mode', restoreError);
+    }
+    statusLabel.textContent = '複数人モードを開始できませんでした';
+    beautyStatus.textContent = '元のモードに戻しました';
+    throw error;
+  } finally {
+    modeSwitching = false;
   }
 }
 
@@ -394,32 +444,14 @@ async function startCamera() {
   try {
     if (!window.Pose || !window.FaceMesh) throw new Error('認識ライブラリを読み込めませんでした。インターネット接続を確認してください。');
     await Promise.all(imageLoads);
-    pose = new Pose({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
-    pose.setOptions({
-      modelComplexity: 0,
-      smoothLandmarks: true,
-      enableSegmentation: false,
-      minDetectionConfidence: 0.55,
-      minTrackingConfidence: 0.55,
-    });
-    pose.onResults(onResults);
-
-    faceMesh = new FaceMesh({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
-    faceMesh.setOptions({
-      maxNumFaces: 1,
-      refineLandmarks: true,
-      selfieMode: false,
-      minDetectionConfidence: 0.55,
-      minTrackingConfidence: 0.55,
-    });
-    faceMesh.onResults(onFaceResults);
-
     await openCamera('');
-    if (peopleMode === 'multi') {
-      startPhase = 'multi-model';
-      statusLabel.textContent = '最大3人モードを準備中';
-      await ensureMultiPersonModels();
-    }
+
+    startPhase = peopleMode === 'multi' ? 'multi-model' : 'single-model';
+    statusLabel.textContent = peopleMode === 'multi' ? '最大3人モードを準備中' : '1人モードを準備中';
+    modeSwitching = true;
+    await configureModelsForMode();
+    modeSwitching = false;
+
     running = true;
     requestAnimationFrame(processFrame);
     welcome.classList.add('hidden');
@@ -427,6 +459,7 @@ async function startCamera() {
     updatePeopleModeButtons();
     resizeCanvas();
   } catch (error) {
+    modeSwitching = false;
     console.error(error);
     if (mediaStream) {
       mediaStream.getTracks().forEach(track => track.stop());
@@ -440,7 +473,7 @@ async function startCamera() {
     welcome.querySelector('p').textContent = error.name === 'NotAllowedError'
       ? 'カメラの使用が許可されていません。アドレスバーのカメラ設定から許可してください。'
       : multiModelFailed
-        ? '複数人用データを読み込めませんでした。インターネット接続を確認して再読み込みしてください。'
+        ? '端末の空きメモリまたは通信を確認し、他のタブを閉じてから再読み込みしてください。'
         : error.message;
   }
 }
@@ -483,20 +516,18 @@ function scheduleNextFrame() {
 
 async function processFrame() {
   if (!running) return;
-  if (!frameBusy && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+  if (!frameBusy && !modeSwitching && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
     frameBusy = true;
     try {
       frameNumber += 1;
       if (peopleMode === 'multi') {
-        await ensureMultiPersonModels();
-        const timestamp = performance.now();
-        const poseResult = multiPoseLandmarker.detectForVideo(video, timestamp);
-        if (beautyToggle.checked && frameNumber % 2 === 0) {
-          const faceResult = multiFaceLandmarker.detectForVideo(video, timestamp);
-          latestMultiFaceLandmarks = faceResult.faceLandmarks || [];
+        if (beautyToggle.checked && frameNumber % 3 === 0) {
+          await faceMesh.send({ image: video });
         } else if (!beautyToggle.checked) {
           latestMultiFaceLandmarks = [];
         }
+        const timestamp = performance.now();
+        const poseResult = multiPoseLandmarker.detectForVideo(video, timestamp);
         drawScene(video, poseResult.landmarks || [], latestMultiFaceLandmarks);
       } else {
         if (beautyToggle.checked && frameNumber % 3 === 0) {
