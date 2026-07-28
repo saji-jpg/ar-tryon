@@ -7,6 +7,16 @@ const statusLabel = document.querySelector('#status');
 const stage = document.querySelector('.stage');
 const cameraPicker = document.querySelector('#cameraPicker');
 const cameraSelect = document.querySelector('#cameraSelect');
+const beautyToggle = document.querySelector('#beautyToggle');
+const beautyStrength = document.querySelector('#beautyStrength');
+const beautyValue = document.querySelector('#beautyValue');
+const beautyStatus = document.querySelector('#beautyStatus');
+const effectCanvas = document.createElement('canvas');
+const effectCtx = effectCanvas.getContext('2d');
+
+const FACE_OVAL = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
+const LEFT_EYE = [33, 133, 159, 145];
+const RIGHT_EYE = [362, 263, 386, 374];
 
 const uniforms = {
   natsu: { src: 'natsu.png', scale: 6.2, y: 0.33, x: 0.00 },
@@ -16,9 +26,12 @@ const uniforms = {
 
 let selected = 'natsu';
 let pose = null;
+let faceMesh = null;
+let latestFaceLandmarks = null;
 let running = false;
 let mediaStream = null;
 let frameBusy = false;
+let frameNumber = 0;
 const images = {};
 const imageLoads = [];
 
@@ -37,6 +50,8 @@ function resizeCanvas() {
   const rect = stage.getBoundingClientRect();
   canvas.width = Math.max(1, Math.round(rect.width * ratio));
   canvas.height = Math.max(1, Math.round(rect.height * ratio));
+  effectCanvas.width = canvas.width;
+  effectCanvas.height = canvas.height;
 }
 
 function coverTransform(sourceWidth, sourceHeight) {
@@ -50,6 +65,107 @@ function coverTransform(sourceWidth, sourceHeight) {
   };
 }
 
+function facePoint(point, fit) {
+  return {
+    x: canvas.width - (point.x * video.videoWidth * fit.scale + fit.x),
+    y: point.y * video.videoHeight * fit.scale + fit.y,
+  };
+}
+
+function eyeGeometry(points, indices, fit) {
+  const corners = [facePoint(points[indices[0]], fit), facePoint(points[indices[1]], fit)];
+  const upper = facePoint(points[indices[2]], fit);
+  const lower = facePoint(points[indices[3]], fit);
+  return {
+    center: {
+      x: (corners[0].x + corners[1].x + upper.x + lower.x) / 4,
+      y: (corners[0].y + corners[1].y + upper.y + lower.y) / 4,
+    },
+    width: Math.max(1, Math.hypot(corners[0].x - corners[1].x, corners[0].y - corners[1].y)),
+  };
+}
+
+function drawEyeMagnification(points, indices, fit, strength) {
+  const eye = eyeGeometry(points, indices, fit);
+  const sourceWidth = eye.width * 1.85;
+  const sourceHeight = eye.width * 1.18;
+  const zoom = 1 + strength * 0.13;
+  const drawWidth = sourceWidth * zoom;
+  const drawHeight = sourceHeight * zoom;
+  const sourceX = eye.center.x - sourceWidth / 2;
+  const sourceY = eye.center.y - sourceHeight / 2;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.ellipse(eye.center.x, eye.center.y, drawWidth * 0.47, drawHeight * 0.43, 0, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.globalAlpha = 0.96;
+  ctx.drawImage(
+    effectCanvas,
+    sourceX, sourceY, sourceWidth, sourceHeight,
+    eye.center.x - drawWidth / 2, eye.center.y - drawHeight / 2, drawWidth, drawHeight,
+  );
+  ctx.restore();
+}
+
+function applyBeautyEffect(points, fit) {
+  const strength = Number(beautyStrength.value) / 100;
+  if (!beautyToggle.checked || strength <= 0 || !points) return;
+
+  effectCtx.clearRect(0, 0, effectCanvas.width, effectCanvas.height);
+  effectCtx.drawImage(canvas, 0, 0);
+
+  const oval = FACE_OVAL.map(index => facePoint(points[index], fit));
+  const leftEye = eyeGeometry(points, LEFT_EYE, fit);
+  const rightEye = eyeGeometry(points, RIGHT_EYE, fit);
+  const mouthLeft = facePoint(points[61], fit);
+  const mouthRight = facePoint(points[291], fit);
+  const mouthCenter = {
+    x: (mouthLeft.x + mouthRight.x) / 2,
+    y: (mouthLeft.y + mouthRight.y) / 2,
+  };
+  const mouthWidth = Math.max(1, Math.hypot(mouthLeft.x - mouthRight.x, mouthLeft.y - mouthRight.y));
+
+  ctx.save();
+  ctx.beginPath();
+  oval.forEach((point, index) => {
+    if (index === 0) ctx.moveTo(point.x, point.y);
+    else ctx.lineTo(point.x, point.y);
+  });
+  ctx.closePath();
+  ctx.ellipse(leftEye.center.x, leftEye.center.y, leftEye.width * 0.72, leftEye.width * 0.48, 0, 0, Math.PI * 2);
+  ctx.ellipse(rightEye.center.x, rightEye.center.y, rightEye.width * 0.72, rightEye.width * 0.48, 0, 0, Math.PI * 2);
+  ctx.ellipse(mouthCenter.x, mouthCenter.y, mouthWidth * 0.62, mouthWidth * 0.34, 0, 0, Math.PI * 2);
+  ctx.clip('evenodd');
+  ctx.globalAlpha = 0.16 + strength * 0.30;
+  ctx.filter = `blur(${Math.max(1, strength * 6).toFixed(1)}px) brightness(${(1 + strength * 0.07).toFixed(3)}) saturate(${(1 + strength * 0.05).toFixed(3)})`;
+  ctx.drawImage(effectCanvas, 0, 0);
+  ctx.restore();
+
+  drawEyeMagnification(points, LEFT_EYE, fit, strength);
+  drawEyeMagnification(points, RIGHT_EYE, fit, strength);
+}
+
+function onFaceResults(results) {
+  const detected = results.multiFaceLandmarks?.[0];
+  if (!detected) {
+    latestFaceLandmarks = null;
+    beautyStatus.textContent = beautyToggle.checked ? '顔を正面に映してください' : '顔加工はオフです';
+    return;
+  }
+
+  if (latestFaceLandmarks?.length === detected.length) {
+    latestFaceLandmarks = detected.map((point, index) => ({
+      x: latestFaceLandmarks[index].x * 0.65 + point.x * 0.35,
+      y: latestFaceLandmarks[index].y * 0.65 + point.y * 0.35,
+      z: latestFaceLandmarks[index].z * 0.65 + point.z * 0.35,
+    }));
+  } else {
+    latestFaceLandmarks = detected.map(point => ({ ...point }));
+  }
+  beautyStatus.textContent = '美肌＋自然なデカ目';
+}
+
 function onResults(results) {
   if (!video.videoWidth) return;
   const fit = coverTransform(video.videoWidth, video.videoHeight);
@@ -60,6 +176,8 @@ function onResults(results) {
   ctx.scale(-1, 1);
   ctx.drawImage(results.image, fit.x, fit.y, fit.width, fit.height);
   ctx.restore();
+
+  applyBeautyEffect(latestFaceLandmarks, fit);
 
   const points = results.poseLandmarks;
   if (!points || !Number.isFinite(points[11]?.x) || !Number.isFinite(points[12]?.x)) {
@@ -106,7 +224,7 @@ async function startCamera() {
   startButton.textContent = '起動しています…';
   statusLabel.textContent = 'カメラを準備中';
   try {
-    if (!window.Pose) throw new Error('姿勢認識ライブラリを読み込めませんでした。インターネット接続を確認してください。');
+    if (!window.Pose || !window.FaceMesh) throw new Error('認識ライブラリを読み込めませんでした。インターネット接続を確認してください。');
     await Promise.all(imageLoads);
     pose = new Pose({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
     pose.setOptions({
@@ -117,6 +235,17 @@ async function startCamera() {
       minTrackingConfidence: 0.55,
     });
     pose.onResults(onResults);
+
+    faceMesh = new FaceMesh({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
+    faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: true,
+      selfieMode: false,
+      minDetectionConfidence: 0.55,
+      minTrackingConfidence: 0.55,
+    });
+    faceMesh.onResults(onFaceResults);
+
     await openCamera('');
     running = true;
     requestAnimationFrame(processFrame);
@@ -170,6 +299,10 @@ async function processFrame() {
   if (!frameBusy && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
     frameBusy = true;
     try {
+      frameNumber += 1;
+      if (beautyToggle.checked && frameNumber % 2 === 0) {
+        await faceMesh.send({ image: video });
+      }
       await pose.send({ image: video });
     } catch (error) {
       console.error('Pose processing failed', error);
@@ -197,6 +330,16 @@ cameraSelect.addEventListener('change', async () => {
 navigator.mediaDevices?.addEventListener?.('devicechange', () => {
   const activeId = mediaStream?.getVideoTracks()[0]?.getSettings().deviceId || '';
   updateCameraList(activeId).catch(console.error);
+});
+
+beautyToggle.addEventListener('change', () => {
+  latestFaceLandmarks = null;
+  beautyStrength.disabled = !beautyToggle.checked;
+  beautyStatus.textContent = beautyToggle.checked ? '顔を検出しています…' : '顔加工はオフです';
+});
+
+beautyStrength.addEventListener('input', () => {
+  beautyValue.value = `${beautyStrength.value}%`;
 });
 
 startButton.addEventListener('click', startCamera);
