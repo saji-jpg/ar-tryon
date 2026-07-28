@@ -180,6 +180,7 @@ function applyBeautyEffect(points, fit) {
 }
 
 function onFaceResults(results) {
+  if (peopleMode !== 'single') return;
   const detected = results.multiFaceLandmarks?.[0];
   if (!detected) {
     latestFaceLandmarks = null;
@@ -296,31 +297,45 @@ async function ensureMultiPersonModels() {
     const fileset = await vision.FilesetResolver.forVisionTasks(
       'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm',
     );
-    multiPoseLandmarker = await vision.PoseLandmarker.createFromOptions(fileset, {
-      baseOptions: {
-        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
-        delegate: 'GPU',
-      },
-      runningMode: 'VIDEO',
-      numPoses: 3,
-      minPoseDetectionConfidence: 0.5,
-      minPosePresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-      outputSegmentationMasks: false,
-    });
-    multiFaceLandmarker = await vision.FaceLandmarker.createFromOptions(fileset, {
-      baseOptions: {
-        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
-        delegate: 'GPU',
-      },
-      runningMode: 'VIDEO',
-      numFaces: 3,
-      minFaceDetectionConfidence: 0.5,
-      minFacePresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-      outputFaceBlendshapes: false,
-      outputFacialTransformationMatrixes: false,
-    });
+
+    const createModels = async delegate => {
+      multiPoseLandmarker = await vision.PoseLandmarker.createFromOptions(fileset, {
+        baseOptions: {
+          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
+          delegate,
+        },
+        runningMode: 'VIDEO',
+        numPoses: 3,
+        minPoseDetectionConfidence: 0.5,
+        minPosePresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+        outputSegmentationMasks: false,
+      });
+      multiFaceLandmarker = await vision.FaceLandmarker.createFromOptions(fileset, {
+        baseOptions: {
+          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+          delegate,
+        },
+        runningMode: 'VIDEO',
+        numFaces: 3,
+        minFaceDetectionConfidence: 0.5,
+        minFacePresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+        outputFaceBlendshapes: false,
+        outputFacialTransformationMatrixes: false,
+      });
+    };
+
+    try {
+      await createModels('GPU');
+    } catch (gpuError) {
+      console.warn('GPU multi-person models unavailable, using CPU', gpuError);
+      multiPoseLandmarker?.close?.();
+      multiFaceLandmarker?.close?.();
+      multiPoseLandmarker = null;
+      multiFaceLandmarker = null;
+      await createModels('CPU');
+    }
   })().catch(error => {
     multiModelsPromise = null;
     multiPoseLandmarker?.close?.();
