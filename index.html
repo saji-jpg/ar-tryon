@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#18243a">
   <title>制服AR試着</title>
-  <link rel="stylesheet" href="style-v3.css?v=20260728-3">
+  <link rel="stylesheet" href="style-v3.css?v=20260728-4">
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
@@ -41,10 +41,10 @@
       <div id="status" class="status" role="status" aria-live="polite">準備中</div>
       <div class="guide" aria-hidden="true"><span></span></div>
 
-      <aside class="beauty-panel" aria-label="顔加工">
+      <aside class="beauty-panel" aria-label="ビューティー補正">
         <label class="beauty-toggle">
-          <input id="beautyToggle" type="checkbox" checked>
-          <span>顔加工</span>
+          <input id="beautyToggle" type="checkbox" checked aria-label="ビューティー補正のオン・オフ">
+          <span aria-hidden="true">✨</span>
         </label>
         <label class="beauty-strength" for="beautyStrength">
           <span>強さ</span>
@@ -67,6 +67,6 @@
       </button>
     </nav>
   </main>
-  <script src="app-v3.js?v=20260728-3"></script>
+  <script src="app-v3.js?v=20260728-4"></script>
 </body>
 </html>
