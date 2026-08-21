@@ -20,7 +20,7 @@ const LEFT_EYE = [33, 133, 159, 145];
 const RIGHT_EYE = [362, 263, 386, 374];
 
 const uniforms = {
-  natsu: { src: 'natsu.png', scale: 6.2, y: 0.33, x: 0.00 },
+  natsu: { src: 'natsu.png', scale: 5.5, y: 0.33, x: 0.00 },
   aihuku: { src: 'aihuku.png', scale: 5.5, y: 0.30, x: -0.01 },
   huyu: { src: 'huyu.png', scale: 5.5, y: 0.29, x: 0.00 },
 };
